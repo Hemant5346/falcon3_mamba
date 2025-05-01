@@ -89,7 +89,8 @@ sampling_params = SamplingParams(
 )
 
 print(f"[INFO] Loading model: {args.model_name_or_path}")
-llm = LLM(model=args.model_name_or_path)
+llm = LLM(model=args.model_name_or_path, dtype="float16")
+
 
 # === Generate responses ===
 generations = []
