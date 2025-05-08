@@ -5,7 +5,8 @@ from tqdm import tqdm
 from collections import defaultdict
 from tabulate import tabulate
 import numpy as np
-from vllm import LLM, SamplingParams
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # Add root to sys.path (for src imports)
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
@@ -54,13 +55,27 @@ def compute_metrics_fn(eval_results, k, agg_method):
     return metrics
 
 
+def generate_response(model, tokenizer, prompt, temperature=0.7, top_p=0.8, max_tokens=512):
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        output_ids = model.generate(
+            **inputs,
+            do_sample=True,
+            temperature=temperature,
+            top_p=top_p,
+            max_new_tokens=max_tokens,
+            pad_token_id=tokenizer.eos_token_id
+        )
+    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
+
+
 # === CLI Arguments ===
 parser = argparse.ArgumentParser()
-parser.add_argument('--model_name_or_path', type=str, default="tiiuae/falcon-rw-1b-mamba")
-parser.add_argument('--prompt_type', type=str, default="falcon-mamba-math-cot")
+parser.add_argument('--model_name_or_path', type=str, default="tiiuae/Falcon3-Mamba-7B-Base")
+parser.add_argument('--prompt_type', type=str, default="falcon-math-cot")
 parser.add_argument('--data_name', type=str, default="college_math")
 parser.add_argument('--split', type=str, default="test")
-parser.add_argument('--output_dir', type=str, default="./outputs/falcon_3_mamba")
+parser.add_argument('--output_dir', type=str, default="./outputs/falcon3_mamba")
 parser.add_argument('--num_test_sample', type=int, default=0)
 parser.add_argument('--temperature', type=float, default=0.7)
 parser.add_argument('--top_p', type=float, default=0.8)
@@ -71,7 +86,7 @@ output_dir = os.path.abspath(args.output_dir)
 os.makedirs(output_dir, exist_ok=True)
 print(f"[DEBUG] Using output directory: {output_dir}")
 
-# === Load datasets ===
+# === Load dataset ===
 datasets = load_datasets([f"{args.data_name}/{args.split}"])
 if args.num_test_sample:
     datasets = datasets[:args.num_test_sample]
@@ -79,18 +94,11 @@ if args.num_test_sample:
 print(f"[DEBUG] First sample:\n{datasets[0]}")
 print(f"[DEBUG] Available keys: {list(datasets[0].keys())}")
 
-# === Load VLLM Model ===
-sampling_params = SamplingParams(
-    temperature=args.temperature,
-    top_p=args.top_p,
-    max_tokens=512,
-    stop=[],
-    use_beam_search=False
-)
-
+# === Load model & tokenizer ===
 print(f"[INFO] Loading model: {args.model_name_or_path}")
-llm = LLM(model=args.model_name_or_path, dtype="float16")
-
+tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
+model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.float16)
+model.to("cuda" if torch.cuda.is_available() else "cpu")
 
 # === Generate responses ===
 generations = []
@@ -104,10 +112,15 @@ for idx, sample in enumerate(tqdm(datasets, desc="Generating responses")):
         continue
 
     try:
-        outputs = llm.generate(prompts=[prompt], sampling_params=sampling_params)
-        output_text = outputs[0].outputs[0].text
+        output_text = generate_response(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            temperature=args.temperature,
+            top_p=args.top_p
+        )
     except Exception as e:
-        print(f"[ERROR] VLLM generation failed for prompt: {prompt} — {e}")
+        print(f"[ERROR] Generation failed for prompt: {prompt} — {e}")
         continue
 
     generation = {
@@ -124,7 +137,7 @@ for idx, sample in enumerate(tqdm(datasets, desc="Generating responses")):
         save_jsonl(generations, checkpoint_path)
         print(f"[INFO] Checkpoint saved at {idx + 1} samples")
 
-# Final Save
+# Save full outputs
 if args.save_outputs:
     full_output_path = os.path.join(output_dir, "generations.jsonl")
     save_jsonl(generations, full_output_path)
