@@ -55,7 +55,7 @@ def compute_metrics_fn(eval_results, k, agg_method):
     return metrics
 
 
-def generate_response(model, tokenizer, prompt, temperature=0.7, top_p=0.8, max_tokens=512):
+def generate_response(model, tokenizer, prompt, temperature=0.001, top_p=0.8, max_tokens=512):
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     with torch.no_grad():
         output_ids = model.generate(
@@ -67,6 +67,7 @@ def generate_response(model, tokenizer, prompt, temperature=0.7, top_p=0.8, max_
             pad_token_id=tokenizer.eos_token_id
         )
     return tokenizer.decode(output_ids[0], skip_special_tokens=True)
+
 
 
 # === CLI Arguments ===
