@@ -55,19 +55,24 @@ def compute_metrics_fn(eval_results, k, agg_method):
     return metrics
 
 
-def generate_response(model, tokenizer, prompt, temperature=0.001, top_p=0.8, max_tokens=512):
+def generate_response(model, tokenizer, prompt, temperature=0.7, top_p=0.8, max_tokens=512, do_sample=True):
+    if do_sample:
+        if temperature <= 0:
+            raise ValueError("`temperature` must be > 0 when `do_sample=True`")
+    else:
+        temperature = 1.0  # ignored in greedy mode
+
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     with torch.no_grad():
         output_ids = model.generate(
             **inputs,
-            do_sample=True,
+            do_sample=do_sample,
             temperature=temperature,
             top_p=top_p,
             max_new_tokens=max_tokens,
             pad_token_id=tokenizer.eos_token_id
         )
     return tokenizer.decode(output_ids[0], skip_special_tokens=True)
-
 
 
 # === CLI Arguments ===
@@ -80,6 +85,7 @@ parser.add_argument('--output_dir', type=str, default="./outputs/falcon3_mamba")
 parser.add_argument('--num_test_sample', type=int, default=0)
 parser.add_argument('--temperature', type=float, default=0.7)
 parser.add_argument('--top_p', type=float, default=0.8)
+parser.add_argument('--do_sample', action='store_true')
 parser.add_argument('--save_outputs', action="store_true")
 args = parser.parse_args()
 
@@ -117,8 +123,9 @@ for idx, sample in enumerate(tqdm(datasets, desc="Generating responses")):
             model=model,
             tokenizer=tokenizer,
             prompt=prompt,
-            temperature=args.temperature,
-            top_p=args.top_p
+            temperature=max(args.temperature, 1e-5),
+            top_p=args.top_p,
+            do_sample=args.do_sample
         )
     except Exception as e:
         print(f"[ERROR] Generation failed for prompt: {prompt} — {e}")
